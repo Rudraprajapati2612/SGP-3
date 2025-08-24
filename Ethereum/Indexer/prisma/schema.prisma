@@ -1,0 +1,69 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  // output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+// datasource db {
+//   provider = "postgresql"
+//   url      = env("DATABASE_URL")
+// }
+
+// generator client {
+//   provider = "prisma-client-js"
+// }
+
+model Token {
+  id        Int      @id @default(autoincrement())
+  address   String   @unique
+  symbol    String
+  name      String?
+  decimals  BigInt  
+  poolsA    Pool[]   @relation("TokenA")
+  poolsB    Pool[]   @relation("TokenB")
+}
+
+model Pool {
+  id        Int      @id @default(autoincrement())
+  address   String   @unique
+  tokenAId  Int
+  tokenBId  Int
+  tokenA    Token    @relation("TokenA", fields: [tokenAId], references: [id])
+  tokenB    Token    @relation("TokenB", fields: [tokenBId], references: [id])
+  createdAt DateTime @default(now())
+  liquidity Liquidity[]
+  swaps     Swap[]
+}
+
+model Liquidity {
+  id        Int      @id @default(autoincrement())
+  poolId    Int
+  pool      Pool     @relation(fields: [poolId], references: [id])
+  provider  String
+  amountA   String
+  amountB   String
+  createdAt DateTime @default(now())
+}
+
+model Swap {
+  id        Int      @id @default(autoincrement())
+  poolId    Int
+  pool      Pool     @relation(fields: [poolId], references: [id])
+  trader    String
+  amountIn  String
+  amountOut String
+  tokenIn   String
+  tokenOut  String
+  createdAt DateTime @default(now())
+}
