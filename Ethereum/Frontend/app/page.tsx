@@ -95,6 +95,9 @@ export default function SwapLiTApp() {
   const [loadingUserPosition, setLoadingUserPosition] = useState(false)
   const [loadingPoolDetails, setLoadingPoolDetails] = useState(false)
 
+  const [showPortfolioModal, setShowPortfolioModal] = useState(false)
+  const [selectedUserPosition, setSelectedUserPosition] = useState<UserLPPosition | null>(null)
+
   // ---------- Connect ----------
   const connectWallet = async () => {
     const eth = (window as any).ethereum
@@ -647,6 +650,65 @@ export default function SwapLiTApp() {
     }
   }
 
+  const calculateLiquidityAmount = async (inputToken: string, outputToken: string, inputAmount: string) => {
+    if (!inputAmount || !signer) return ""
+
+    try {
+      const factory = getFactory()
+      const pairAddress = await factory.getPair(inputToken, outputToken)
+
+      if (isZeroAddr(pairAddress)) {
+        // No existing pool, user can input any amounts
+        return ""
+      }
+
+      // Get reserves from existing pool
+      const pairContract = new ethers.Contract(pairAddress, AMMPairABI, signer)
+      const reserves = await pairContract.getReserves()
+      const token0 = await pairContract.token0()
+
+      let reserveInput, reserveOutput
+      if (token0.toLowerCase() === inputToken.toLowerCase()) {
+        reserveInput = reserves[0]
+        reserveOutput = reserves[1]
+      } else {
+        reserveInput = reserves[1]
+        reserveOutput = reserves[0]
+      }
+
+      if (reserveInput === 0n || reserveOutput === 0n) return ""
+
+      // Calculate proportional amount: outputAmount = (inputAmount * reserveOutput) / reserveInput
+      const inputAmountWei = ethers.parseUnits(inputAmount, 18)
+      const outputAmountWei = (inputAmountWei * reserveOutput) / reserveInput
+
+      return ethers.formatUnits(outputAmountWei, 18)
+    } catch (error) {
+      console.error("Error calculating liquidity amount:", error)
+      return ""
+    }
+  }
+
+  const handleLiqAmtAChange = async (value: string) => {
+    setLiqAmtA(value)
+    if (value && liqTokenA !== liqTokenB) {
+      const calculatedB = await calculateLiquidityAmount(liqTokenA, liqTokenB, value)
+      if (calculatedB) {
+        setLiqAmtB(calculatedB)
+      }
+    }
+  }
+
+  const handleLiqAmtBChange = async (value: string) => {
+    setLiqAmtB(value)
+    if (value && liqTokenA !== liqTokenB) {
+      const calculatedA = await calculateLiquidityAmount(liqTokenB, liqTokenA, value)
+      if (calculatedA) {
+        setLiqAmtA(calculatedA)
+      }
+    }
+  }
+
   const addLiquidity = async () => {
     if (!signer) return
     if (!liqAmtA || !liqAmtB) return alert("Enter both amounts")
@@ -827,6 +889,12 @@ export default function SwapLiTApp() {
   const fetchPools = async () => {
     // Implementation for fetchPools
     console.log("Fetching pools...")
+  }
+
+  const showUserLPDetails = async (poolId: string, pairAddress: string) => {
+    const position = await fetchUserLPPosition(poolId, pairAddress)
+    setSelectedUserPosition(position)
+    setShowPortfolioModal(true)
   }
 
   return (
@@ -1303,13 +1371,13 @@ export default function SwapLiTApp() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <input
                 value={liqAmtA}
-                onChange={(e) => setLiqAmtA(e.target.value)}
+                onChange={(e) => handleLiqAmtAChange(e.target.value)}
                 placeholder={`${getTokenSymbol(liqTokenA)} amount`}
                 className="bg-gray-900 border border-gray-600 text-white px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent placeholder-gray-400"
               />
               <input
                 value={liqAmtB}
-                onChange={(e) => setLiqAmtB(e.target.value)}
+                onChange={(e) => handleLiqAmtBChange(e.target.value)}
                 placeholder={`${getTokenSymbol(liqTokenB)} amount`}
                 className="bg-gray-900 border border-gray-600 text-white px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent placeholder-gray-400"
               />
@@ -1322,6 +1390,44 @@ export default function SwapLiTApp() {
           >
             {isAddingLiquidity ? "Adding..." : "Add Liquidity"}
           </button>
+        </section>
+
+        <section className="bg-gray-800 border border-gray-700 rounded-2xl p-6 space-y-4 shadow-xl">
+          <h2 className="font-semibold text-xl text-white">My Liquidity Positions</h2>
+          <div className="space-y-3">
+            {pools.filter((pool) => pool.userPosition && Number.parseFloat(pool.userPosition.lpBalance) > 0).length >
+            0 ? (
+              pools
+                .filter((pool) => pool.userPosition && Number.parseFloat(pool.userPosition.lpBalance) > 0)
+                .map((pool) => (
+                  <div
+                    key={pool.id}
+                    className="bg-gray-900 border border-gray-600 rounded-xl p-4 cursor-pointer hover:border-pink-500 transition-colors"
+                    onClick={() => showUserLPDetails(pool.id, pool.address)}
+                  >
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h3 className="text-white font-medium">{pool.id}</h3>
+                        <p className="text-gray-400 text-sm">
+                          LP Tokens: {Number.parseFloat(pool.userPosition?.lpBalance || "0").toFixed(4)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-pink-400 font-medium">
+                          {pool.userPosition?.sharePercentage.toFixed(2)}% Share
+                        </p>
+                        <p className="text-gray-400 text-sm">Click for details</p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <p>No liquidity positions found</p>
+                <p className="text-sm">Add liquidity to start earning fees</p>
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Enhanced Swap */}
@@ -1572,6 +1678,74 @@ export default function SwapLiTApp() {
           </button>
         </section>
       </div>
+
+      {showPortfolioModal && selectedUserPosition && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 border border-gray-700 rounded-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-white">Portfolio Details</h2>
+              <button onClick={() => setShowPortfolioModal(false)} className="text-gray-400 hover:text-white text-2xl">
+                ×
+              </button>
+            </div>
+
+            <PortfolioCard
+              lpBalance={selectedUserPosition.lpBalance}
+              reserveA={selectedUserPosition.shareOfReserveA.toString()}
+              reserveB={selectedUserPosition.shareOfReserveB.toString()}
+              balanceA="0" // You can fetch actual wallet balance here
+              balanceB="0" // You can fetch actual wallet balance here
+            />
+
+            <div className="mt-4 space-y-2">
+              <div className="bg-gray-900 p-3 rounded-lg">
+                <h4 className="text-white font-medium mb-2">Position Details</h4>
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">LP Tokens:</span>
+                    <span className="text-white">{Number.parseFloat(selectedUserPosition.lpBalance).toFixed(6)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Pool Share:</span>
+                    <span className="text-pink-400">{selectedUserPosition.sharePercentage.toFixed(4)}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Your Token A:</span>
+                    <span className="text-white">{selectedUserPosition.shareOfReserveA.toFixed(6)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Your Token B:</span>
+                    <span className="text-white">{selectedUserPosition.shareOfReserveB.toFixed(6)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
+const PortfolioCard = ({ lpBalance, reserveA, reserveB, balanceA, balanceB }: any) => (
+  <div className="space-y-4">
+    <div className="bg-gray-900 border border-pink-500/20 rounded-lg p-4">
+      <div className="font-medium text-pink-400">LP Tokens</div>
+      <div className="text-xl text-white">{Number(lpBalance).toFixed(6)}</div>
+    </div>
+
+    <div className="grid grid-cols-2 gap-4">
+      <div className="bg-gray-900 border border-green-500/20 rounded-lg p-4">
+        <div className="font-medium text-green-400">Reserve A</div>
+        <div className="text-xl text-white">{Number(reserveA).toFixed(6)}</div>
+        <div className="text-sm text-gray-400">Wallet: {Number(balanceA).toFixed(6)}</div>
+      </div>
+
+      <div className="bg-gray-900 border border-blue-500/20 rounded-lg p-4">
+        <div className="font-medium text-blue-400">Reserve B</div>
+        <div className="text-xl text-white">{Number(reserveB).toFixed(6)}</div>
+        <div className="text-sm text-gray-400">Wallet: {Number(balanceB).toFixed(6)}</div>
+      </div>
+    </div>
+  </div>
+)
